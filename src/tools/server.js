@@ -1,12 +1,37 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { dashboardHtml } from './dashboard.js';
 
 export async function startServer(projDir, port = 3000) {
   const distDir = path.join(projDir, 'dist');
   
   const server = http.createServer((req, res) => {
     let reqPath = req.url.split('?')[0];
+    
+    // 1. API Route: Expose atomic project state
+    if (reqPath === '/api/state') {
+      const statePath = path.join(projDir, '.forge', 'state.json');
+      if (fs.existsSync(statePath)) {
+        res.writeHead(200, { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*' 
+        });
+        res.end(fs.readFileSync(statePath, 'utf8'));
+      } else {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No active state' }));
+      }
+      return;
+    }
+    
+    // 2. Dashboard Route: Serve premium glassmorphic graphical dashboard
+    if (reqPath === '/forge' || reqPath === '/forge/' || reqPath === '/forge/index.html') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(dashboardHtml);
+      return;
+    }
+
     if (reqPath === '/') reqPath = '/index.html';
     
     const targetFile = path.join(distDir, reqPath);
