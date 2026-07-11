@@ -979,6 +979,46 @@ fun ProjectCompleteOverlay(
     project: Project,
     onDismiss: () -> Unit
 ) {
+    val state = remember(project) { com.example.util.JsonUtils.jsonToForgeState(project.stateJson) }
+    var showLiveApp by remember { mutableStateOf(false) }
+
+    if (showLiveApp) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showLiveApp = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background
+            ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = project.name,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        IconButton(onClick = { showLiveApp = false }) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
+                        }
+                    }
+                    com.example.ui.components.LiveAppPreview(
+                        html = state?.artifactHtml ?: "",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    )
+                }
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1083,7 +1123,7 @@ fun ProjectCompleteOverlay(
 
                 // Actions buttons
                 Button(
-                    onClick = { /* Launch built APK */ },
+                    onClick = { showLiveApp = true },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     modifier = Modifier
                         .fillMaxWidth()
