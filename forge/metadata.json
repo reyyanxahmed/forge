@@ -1,0 +1,6 @@
+{
+  "name": "Forge",
+  "description": "An autonomous offline coding agent engine running local sense-decide-act-check loops.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
