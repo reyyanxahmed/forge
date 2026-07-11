@@ -33,6 +33,16 @@ data class Escalation(
 )
 
 @Serializable
+data class ReasoningBlock(
+    val id: String,
+    val label: String,       // e.g. "🧠 Planning tasks"
+    val slogan: String,      // compact 1-line summary shown when collapsed
+    val content: String,     // full token output
+    val timestamp: Long,
+    val isStreaming: Boolean = false
+)
+
+@Serializable
 data class ForgeState(
     val objective: String,
     val plan: List<Task> = emptyList(),

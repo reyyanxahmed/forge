@@ -84,16 +84,16 @@ class LiteRtLmHelper(private val context: Context) {
         }
         val builder = StringBuilder()
         try {
-            kotlinx.coroutines.withTimeoutOrNull(45000) {
+            kotlinx.coroutines.withTimeoutOrNull(120_000) {
                 activeConv.sendMessageAsync(prompt).collect { chunk ->
                     builder.append(chunk)
-                    if (builder.length > 8000) {
+                    if (builder.length > 30_000) {
                         throw kotlinx.coroutines.CancellationException("Length capped")
                     }
                 }
             }
         } catch (ce: kotlinx.coroutines.CancellationException) {
-            Log.w(TAG, "generateResponse capped: length limit of 8000 characters reached.")
+            Log.w(TAG, "generateResponse capped: length limit of 30000 characters reached.")
         } catch (e: Throwable) {
             Log.e(TAG, "Error in sendMessageAsync: ${e.message}", e)
             builder.append("\n[Error during generation: ${e.message}]")
@@ -120,18 +120,18 @@ class LiteRtLmHelper(private val context: Context) {
             }
             val builder = StringBuilder()
             try {
-                kotlinx.coroutines.withTimeoutOrNull(45000) {
+                kotlinx.coroutines.withTimeoutOrNull(120_000) {
                     conv.sendMessageAsync(prompt).collect { chunk ->
                         val piece = chunk.toString()
                         builder.append(piece)
-                        if (builder.length > 8000) {
+                        if (builder.length > 30_000) {
                             throw kotlinx.coroutines.CancellationException("Length capped")
                         }
                         try { onToken(piece) } catch (_: Throwable) {}
                     }
                 }
             } catch (ce: kotlinx.coroutines.CancellationException) {
-                Log.w(TAG, "generateStreaming capped: length limit of 8000 characters reached.")
+                Log.w(TAG, "generateStreaming capped: length limit of 30000 characters reached.")
             } catch (e: Throwable) {
                 Log.e(TAG, "Streaming generation error: ${e.message}", e)
                 builder.append("\n[Error during generation: ${e.message}]")

@@ -61,11 +61,55 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
     private val _liveLabel = MutableStateFlow("")
     val liveLabel = _liveLabel.asStateFlow()
 
+    // Completed reasoning blocks — one per inference call, like Claude Code's
+    // expandable "thinking" sections. Each has a compact slogan when collapsed
+    // and full token output when expanded.
+    private val _reasoningBlocks = MutableStateFlow<List<ReasoningBlock>>(emptyList())
+    val reasoningBlocks = _reasoningBlocks.asStateFlow()
+
     private val _attachedSketchPath = MutableStateFlow<String?>(null)
     val attachedSketchPath = _attachedSketchPath.asStateFlow()
 
     fun setAttachedSketchPath(path: String?) {
         _attachedSketchPath.value = path
+    }
+
+    /** Snapshots the current live stream into a reasoning block and clears it. */
+    private fun snapshotReasoningBlock(label: String, slogan: String) {
+        val content = _liveStream.value
+        val block = ReasoningBlock(
+            id = "rb-${System.currentTimeMillis()}",
+            label = label,
+            slogan = slogan,
+            content = content,
+            timestamp = System.currentTimeMillis()
+        )
+        _reasoningBlocks.value = _reasoningBlocks.value + block
+        _liveStream.value = ""
+        _liveLabel.value = ""
+    }
+
+    /** Derives a compact slogan from the output of each inference phase. */
+    private fun deriveSlogan(label: String, output: String): String {
+        val text = output.trim()
+        val lines = text.count { it == '\n' } + 1
+        return when {
+            label.contains("Planning") -> {
+                val taskCount = Regex(""""id"\s*:""").findAll(text).count()
+                if (taskCount > 0) "Generated $taskCount tasks" else "Plan ready"
+            }
+            label.contains("Writing", ignoreCase = true) -> {
+                val chars = output.length
+                val htmlStart = output.contains("<!doctype", true) || output.contains("<html", true)
+                if (htmlStart) "Generated ${lines} lines · ${chars} bytes of HTML" else "Produced $lines lines"
+            }
+            label.contains("Repairing", ignoreCase = true) -> "Repaired ${lines} lines · self-healing"
+            label.contains("Applying", ignoreCase = true) -> "Applied human guidance · ${lines} lines"
+            label.contains("Judge", ignoreCase = true) -> {
+                if (output.contains("pass", true)) "Verdict: PASS" else "Verdict: evaluated"
+            }
+            else -> "${lines} lines · ${output.length} bytes"
+        }
     }
 
     // Active screen index (0: Home, 1: Progress, 2: Library, 3: Settings)
@@ -79,8 +123,9 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
     // Simulation Job
     private var simulationJob: Job? = null
 
-    // For resuming after escalation
-    private var continuationBlock: (suspend (String) -> Unit)? = null
+    // For resuming after escalation — uses CompletableDeferred instead of the
+    // fragile suspendCancellableContinuation pattern.
+    private var guidanceDeferred: kotlinx.coroutines.CompletableDeferred<String>? = null
 
     init {
         repository = ProjectRepository(application)
@@ -200,6 +245,9 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
         // Cancel any active simulation
         simulationJob?.cancel()
         _currentProjectId.value = null
+        _reasoningBlocks.value = emptyList()
+        _liveStream.value = ""
+        _liveLabel.value = ""
 
         val appName = deriveAppName(objective)
         val initialTasks = listOf(
@@ -252,6 +300,7 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
         fun updateState(status: String, escalations: List<Escalation> = emptyList(), score: Int = 0) {
             if (status == "done" || status == "failed" || status == "escalated") {
                 _liveLabel.value = ""
+                _liveStream.value = ""
             }
             val state = ForgeState(
                 objective = objective,
@@ -302,6 +351,8 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
             expectJson = true,
             sketchPath = sketchPath // Pass attached layout photo to planner!
         )) { chunk -> _liveStream.value += chunk }
+        val plannerSlogan = deriveSlogan("Planning", plannerRes?.toString() ?: _liveStream.value)
+        snapshotReasoningBlock("🧠 Planning tasks", plannerSlogan)
         val plannedTasks = mutableListOf<Task>()
         plannerRes?.optJSONArray("tasks")?.let { arr ->
             for (i in 0 until arr.length()) {
@@ -335,10 +386,14 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
             userPrompt = "Objective: \"$objective\". Build the complete index.html now.",
             expectJson = false
         )) { chunk -> _liveStream.value += chunk }
+        val coderSlogan = deriveSlogan("Writing index.html", coderRes?.optString("text", "") ?: _liveStream.value)
+        snapshotReasoningBlock("✍️ Writing index.html", coderSlogan)
         val generated = extractHtml(coderRes?.optString("text", ""))
         if (generated.isBlank()) {
             logs.add("[Check] Generation failed — the model did not return valid HTML.")
             speak("Generation failed.")
+            _liveStream.value = ""
+            _liveLabel.value = ""
             updateState("failed")
             return
         }
@@ -375,6 +430,8 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
                 userPrompt = "Objective: \"$objective\".\nRuntime error(s):\n${errors.joinToString("\n")}\n\nCurrent index.html:\n$shortened",
                 expectJson = false
             )) { chunk -> _liveStream.value += chunk }
+            val fixSlogan = deriveSlogan("Repairing attempt $attempt", fixRes?.optString("text", "") ?: _liveStream.value)
+            snapshotReasoningBlock("🔧 Repairing index.html (attempt $attempt)", fixSlogan)
             val fixedRaw = extractHtml(fixRes?.optString("text", ""))
             val fixed = mergeStylesAndSvgs(artifactHtml, fixedRaw)
             if (fixed.isNotBlank()) {
@@ -428,7 +485,7 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
             context = "After $maxAttempts autonomous repair attempts the WebView still reports: ${errors.joinToString("; ").take(300)}"
         )
         updateState("escalated", listOf(esc))
-        val guidance = suspendContinuation { }
+        val guidance = awaitGuidance()
         logs.add("[Sense] Human guidance received: \"$guidance\"")
         speak("Applying your guidance.")
         updateState("in_progress")
@@ -441,6 +498,8 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
             userPrompt = "Objective: \"$objective\". Human guidance: \"$guidance\".\nRuntime error(s):\n${errors.joinToString("\n")}\n\nCurrent index.html:\n$artifactHtml",
             expectJson = false
         )) { chunk -> _liveStream.value += chunk }
+        val guidedSlogan = deriveSlogan("Applying guidance", guidedRes?.optString("text", "") ?: _liveStream.value)
+        snapshotReasoningBlock("🔧 Applying your guidance", guidedSlogan)
         val guidedHtml = extractHtml(guidedRes?.optString("text", ""))
         if (guidedHtml.isNotBlank()) {
             artifactHtml = guidedHtml
@@ -465,7 +524,8 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
         }
     }
 
-    /** Extracts a complete HTML document from a model response (strips fences/prose). */
+    /** Extracts a complete HTML document from a model response (strips fences/prose).
+     *  Handles truncated output by auto-closing open tags. */
     private fun extractHtml(raw: String?): String {
         var s = (raw ?: "").trim()
         if (s.isEmpty()) return ""
@@ -477,6 +537,24 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
         if (start < 0) start = lower.indexOf("<html")
         val end = lower.lastIndexOf("</html>")
         if (start >= 0 && end > start) return s.substring(start, end + "</html>".length)
+        // Model output was truncated — no closing </html> found.
+        // Try to salvage by auto-closing the most common open tags.
+        if (start >= 0) {
+            var salvaged = s.substring(start)
+            val tagsToClose = mutableListOf<String>()
+            for (tag in listOf("script", "style", "body", "html")) {
+                val openCount = Regex("<$tag[\\s>]", RegexOption.IGNORE_CASE).findAll(salvaged).count()
+                val closeCount = Regex("</$tag>", RegexOption.IGNORE_CASE).findAll(salvaged).count()
+                if (openCount > closeCount) tagsToClose.add(tag)
+            }
+            for (tag in listOf("script", "style")) {
+                if (tagsToClose.contains(tag)) salvaged += "</$tag>"
+            }
+            if (tagsToClose.contains("body")) salvaged += "</body>"
+            if (tagsToClose.contains("html")) salvaged += "</html>"
+            if (!salvaged.lowercase().endsWith("</html>")) salvaged += "</html>"
+            return salvaged
+        }
         if (s.contains("<") && s.contains(">")) {
             return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body>$s</body></html>"
         }
@@ -494,29 +572,28 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
         }
     }
 
-    private suspend fun suspendContinuation(block: suspend (String) -> Unit): String {
-        return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-            continuationBlock = { guidance ->
-                continuationBlock = null
-                cont.resume(guidance) {
-                    // cancellation block
-                }
-            }
+    /** Suspends until the user submits guidance via the escalation overlay. */
+    private suspend fun awaitGuidance(): String {
+        val deferred = kotlinx.coroutines.CompletableDeferred<String>()
+        guidanceDeferred = deferred
+        try {
+            return deferred.await()
+        } finally {
+            guidanceDeferred = null
         }
     }
 
     fun submitGuidance(guidance: String) {
-        val block = continuationBlock
-        if (block != null) {
-            viewModelScope.launch {
-                block(guidance)
-            }
-        }
+        guidanceDeferred?.complete(guidance)
     }
 
     fun stopSimulation() {
         simulationJob?.cancel()
         simulationJob = null
+        _liveStream.value = ""
+        _liveLabel.value = ""
+        guidanceDeferred?.cancel()
+        guidanceDeferred = null
         _currentProjectId.value = null
         setScreen(0)
     }

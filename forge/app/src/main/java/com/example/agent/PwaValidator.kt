@@ -41,7 +41,7 @@ object PwaValidator {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    suspend fun validate(context: Context, html: String, settleMs: Long = 1800): List<String> =
+    suspend fun validate(context: Context, html: String, settleMs: Long = 3000): List<String> =
         withContext(Dispatchers.Main) {
             if (html.isBlank()) return@withContext listOf("Empty artifact: no HTML was generated.")
             val bridge = Bridge()

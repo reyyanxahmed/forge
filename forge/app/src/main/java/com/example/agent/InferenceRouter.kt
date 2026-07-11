@@ -79,22 +79,26 @@ class InferenceRouter(
         null
     }
 
-    /** One generation, in-process (streaming) if the engine is ready, else HTTP. */
+    /** One generation, in-process (streaming) if the engine is ready, else HTTP.
+     *  Falls back to mock if neither engine nor HTTP server is available yet —
+     *  prevents silent total failure during the model init race window. */
     private suspend fun generate(req: InferRequest, onToken: (String) -> Unit): String {
+        // Fast path: in-process engine with token streaming
         val helper = EngineProvider.helper
         if (helper != null && helper.isReady()) {
             return helper.generateStreaming(formatPrompt(req.systemPrompt, req.userPrompt), onToken)
         }
+        // Fallback: HTTP loopback to LocalLlmServer
         val messages = JSONArray().apply {
             put(JSONObject().apply { put("role", "system"); put("content", req.systemPrompt) })
-            
+
             val userMsg = JSONObject().apply { put("role", "user") }
             if (req.sketchPath != null && java.io.File(req.sketchPath).exists()) {
                 try {
                     val bytes = java.io.File(req.sketchPath).readBytes()
                     val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
                     val dataUrl = "data:image/png;base64,$b64"
-                    
+
                     val contentArr = JSONArray().apply {
                         put(JSONObject().apply {
                             put("type", "text")
@@ -116,7 +120,19 @@ class InferenceRouter(
             }
             put(userMsg)
         }
-        return extractContent(post(req.role.model, messages, temperature = 0.1, jsonMode = req.expectJson))
+        return try {
+            extractContent(post(req.role.model, messages, temperature = 0.1, jsonMode = req.expectJson))
+        } catch (e: java.net.ConnectException) {
+            listener?.onError("Engine not ready yet — using fallback generator. Please wait for model to load.")
+            val res = MockModels.respond(req.role, req.userPrompt)
+            res.optString("text", "").takeIf { it.isNotEmpty() }?.let { runCatching { onToken(it) } }
+            res.optString("text", "")
+        } catch (e: Exception) {
+            listener?.onError("HTTP inference unavailable (${e.message}) — using fallback.")
+            val res = MockModels.respond(req.role, req.userPrompt)
+            res.optString("text", "").takeIf { it.isNotEmpty() }?.let { runCatching { onToken(it) } }
+            res.optString("text", "")
+        }
     }
 
     private fun formatPrompt(system: String, user: String): String =

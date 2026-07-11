@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +40,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.drawBehind
 import com.example.ui.viewmodel.ForgeViewModel
+import android.util.Log
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -56,6 +58,10 @@ fun ProgressScreen(
 
     val liveLabel by viewModel.liveLabel.collectAsState()
     val liveStream by viewModel.liveStream.collectAsState()
+    val reasoningBlocks by viewModel.reasoningBlocks.collectAsState()
+
+    // Track which reasoning blocks are expanded (by index)
+    val expandedBlocks = remember { mutableStateMapOf<Int, Boolean>() }
 
     // Determine current phase based on last session log
     val lastLog = state.sessionLog.lastOrNull() ?: ""
@@ -208,10 +214,33 @@ fun ProgressScreen(
             ) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(bottom = 120.dp)
                 ) {
-                    // Live model output — what Gemma is writing right now
+                    // ---- Completed reasoning blocks (expandable, like Claude Code) ----
+                    if (reasoningBlocks.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "REASONING LOG",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 1.sp
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                        }
+                        itemsIndexed(reasoningBlocks) { index, block ->
+                            val isExpanded = expandedBlocks[index] ?: false
+                            ExpandableReasoningCard(
+                                block = block,
+                                isExpanded = isExpanded,
+                                onToggle = { expandedBlocks[index] = !isExpanded }
+                            )
+                        }
+                    }
+
+                    // ---- Active live stream (what Gemma is writing right now) ----
                     if (liveLabel.isNotEmpty() || liveStream.isNotEmpty()) {
                         item {
                             val streamScroll = rememberScrollState()
@@ -249,7 +278,7 @@ fun ProgressScreen(
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(200.dp)
+                                            .heightIn(max = 200.dp)
                                             .verticalScroll(streamScroll)
                                     ) {
                                         HighlightedConsoleStream(liveStream)
@@ -859,7 +888,7 @@ fun EscalationOverlay(
                 // [KNOWS]
                 StructuredSection(
                     label = "KNOWS",
-                    content = "Created offline Compose scaffolding, defined local database repositories, and generated 2.8 KB of base code models.",
+                    content = "Generated a self-contained single-file web app and validated it in an on-device WebView sandbox.",
                     color = PhaseSenseColor
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -867,7 +896,7 @@ fun EscalationOverlay(
                 // [TRIED]
                 StructuredSection(
                     label = "TRIED",
-                    content = "Attempted 3 sequential self-healing compile trials (import addition, type casts, context elevations). All failed to resolve reference: activeTab.",
+                    content = escalation.context,
                     color = PhaseDecideColor
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -981,6 +1010,37 @@ fun ProjectCompleteOverlay(
 ) {
     val state = remember(project) { com.example.util.JsonUtils.jsonToForgeState(project.stateJson) }
     var showLiveApp by remember { mutableStateOf(false) }
+    var showSource by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    // Real stats from actual state
+    val tasksDone = state?.plan?.count { it.status == "done" } ?: 0
+    val tasksTotal = state?.plan?.size ?: 0
+    val filesCount = state?.fileLedger?.size ?: 0
+    val healedErrors = state?.hypotheses?.count { it.outcome == "resolved" } ?: 0
+    val score = project.score
+
+    // Share intent for the generated app
+    fun shareApp() {
+        try {
+            val artifactDir = java.io.File(context.filesDir, "projects/${project.id}")
+            val htmlFile = java.io.File(artifactDir, "index.html")
+            if (htmlFile.exists()) {
+                val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "text/html"
+                    androidx.core.content.FileProvider.getUriForFile(
+                        context, "${context.packageName}.fileprovider", htmlFile
+                    ).let { uri ->
+                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                }
+                context.startActivity(android.content.Intent.createChooser(shareIntent, "Share ${project.name}"))
+            }
+        } catch (e: Exception) {
+            Log.e("ProjectComplete", "Share failed: ${e.message}")
+        }
+    }
 
     if (showLiveApp) {
         androidx.compose.ui.window.Dialog(
@@ -1014,6 +1074,50 @@ fun ProjectCompleteOverlay(
                             .fillMaxWidth()
                             .weight(1f)
                     )
+                }
+            }
+        }
+    }
+
+    // Source code viewer dialog
+    if (showSource) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showSource = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = Color(0xFF0F1115)
+            ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "index.html",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            ),
+                            color = PhaseSenseColor
+                        )
+                        IconButton(onClick = { showSource = false }) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
+                        }
+                    }
+                    val srcScroll = rememberScrollState()
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(srcScroll)
+                            .padding(16.dp)
+                    ) {
+                        HighlightedConsoleStream(state?.artifactHtml ?: "")
+                    }
                 }
             }
         }
@@ -1077,7 +1181,7 @@ fun ProjectCompleteOverlay(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Stats grid (2x2)
+                // Stats grid (2x2) — real values from state
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1088,13 +1192,13 @@ fun ProjectCompleteOverlay(
                     ) {
                         StatCard(
                             label = "Tasks Completed",
-                            value = "2 / 2",
+                            value = "$tasksDone / $tasksTotal",
                             icon = Icons.Default.AssignmentTurnedIn,
                             modifier = Modifier.weight(1f)
                         )
                         StatCard(
                             label = "Files Generated",
-                            value = "3 files",
+                            value = "$filesCount file${if (filesCount != 1) "s" else ""}",
                             icon = Icons.Default.Article,
                             modifier = Modifier.weight(1f)
                         )
@@ -1105,13 +1209,13 @@ fun ProjectCompleteOverlay(
                     ) {
                         StatCard(
                             label = "Self-Healed Errors",
-                            value = "1 error",
+                            value = "$healedErrors error${if (healedErrors != 1) "s" else ""}",
                             icon = Icons.Default.Build,
                             modifier = Modifier.weight(1f)
                         )
                         StatCard(
                             label = "Quality Score",
-                            value = "91 / 100",
+                            value = "$score / 100",
                             icon = Icons.Default.Star,
                             modifier = Modifier.weight(1f),
                             highlight = true
@@ -1145,7 +1249,7 @@ fun ProjectCompleteOverlay(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedButton(
-                        onClick = { /* Show code files */ },
+                        onClick = { showSource = true },
                         modifier = Modifier
                             .weight(1f)
                             .height(44.dp)
@@ -1158,7 +1262,7 @@ fun ProjectCompleteOverlay(
                     }
 
                     OutlinedButton(
-                        onClick = { /* Share */ },
+                        onClick = { shareApp() },
                         modifier = Modifier
                             .weight(1f)
                             .height(44.dp)
@@ -1223,6 +1327,85 @@ fun StatCard(
                 fontSize = 9.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
             )
+        }
+    }
+}
+
+@Composable
+fun ExpandableReasoningCard(
+    block: ReasoningBlock,
+    isExpanded: Boolean,
+    onToggle: () -> Unit
+) {
+    val streamScroll = rememberScrollState()
+    LaunchedEffect(isExpanded, block.content) {
+        if (isExpanded) streamScroll.scrollTo(streamScroll.maxValue)
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle() },
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F1115)),
+        border = BorderStroke(1.dp, Color(0xFF1E293B).copy(alpha = 0.6f))
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            // Header row: label + slogan + chevron
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Psychology,
+                    contentDescription = null,
+                    tint = PhaseDecideColor,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = block.label,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = PhaseDecideColor,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                if (!isExpanded) {
+                    Text(
+                        text = block.slogan,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp
+                        ),
+                        color = Color(0xFF94A3B8),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(2f, fill = false)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    tint = Color(0xFF64748B),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            // Expandable content
+            if (isExpanded) {
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = Color(0xFF1E293B))
+                Spacer(modifier = Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 280.dp)
+                        .verticalScroll(streamScroll)
+                ) {
+                    HighlightedConsoleStream(block.content)
+                }
+            }
         }
     }
 }
