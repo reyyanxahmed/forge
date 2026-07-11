@@ -4,7 +4,7 @@ export const dashboardHtml = `<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Forge Developer Dashboard</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  <!-- System font stack: fully offline, no CDN dependency -->
   <style>
     :root {
       --bg-color: #0b0f19;
@@ -31,7 +31,7 @@ export const dashboardHtml = `<!DOCTYPE html>
         radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
         radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.15) 0px, transparent 50%);
       color: var(--text-main);
-      font-family: 'Inter', sans-serif;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
       min-height: 100vh;
       overflow-x: hidden;
     }
@@ -221,7 +221,7 @@ export const dashboardHtml = `<!DOCTYPE html>
       background: #05070c;
       border: 1px solid var(--border-color);
       border-radius: 0.75rem;
-      font-family: 'Fira Code', monospace;
+      font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
       font-size: 0.85rem;
       padding: 1.25rem;
       height: 350px;
@@ -292,7 +292,7 @@ export const dashboardHtml = `<!DOCTYPE html>
     }
 
     .hyp-sig {
-      font-family: 'Fira Code', monospace;
+      font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
       font-size: 0.8rem;
       color: var(--accent-red);
       font-weight: 600;

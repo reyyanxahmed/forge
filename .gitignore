@@ -1,0 +1,20 @@
+# Models and Large Binary Files
+*.litertlm
+*.tflite
+*.bin
+
+# Local State & Sessions
+.forge/
+.gradle/
+build/
+app/build/
+local.properties
+
+# Scaffolding outputs from test runs
+test-proj/
+shg-ledger/
+app/
+
+# OS and Cache Files
+.DS_Store
+node_modules/

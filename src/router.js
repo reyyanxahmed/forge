@@ -40,23 +40,21 @@ function getMockResponse(role, messages) {
     // Default fallback
     return {
       tasks: [
-        { id: "1", description: "Initialize workspace with index.html, app.js, style.css and manifest.json", depends_on: [] },
-        { id: "2", description: "Write app logic and layout in files", depends_on: ["1"] },
-        { id: "3", description: "Verify PWA compliance and serve", depends_on: ["2"] }
+        { id: "1", description: "Design Jetpack Compose layouts and Material You theme colors inside MainScreen.kt and Color.kt", depends_on: [] },
+        { id: "2", description: "Implement interactive calculation logic and state handling in MainScreenViewModel.kt", depends_on: ["1"] }
       ]
     };
   }
 
   if (roleLower === 'coder') {
     // Determine which task we are coder for
-    if (lastMsg.includes('Initialize') || lastMsg.includes('task 1') || lastMsg.includes('"id": "1"')) {
+    if (lastMsg.includes('Design') || lastMsg.includes('task 1') || lastMsg.includes('"id": "1"')) {
       const file = path.join(fixturesDir, 'coder_task1.json');
       if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
       return {
         operations: [
-          { op: "write", path: "dist/manifest.json", content: '{\n  "name": "Mock Split App",\n  "short_name": "SplitApp",\n  "start_url": "index.html",\n  "display": "standalone",\n  "background_color": "#121212",\n  "theme_color": "#121212",\n  "icons": [{ "src": "icon.png", "sizes": "192x192", "type": "image/png" }]\n}' },
-          { op: "write", path: "dist/sw.js", content: 'self.addEventListener("fetch", () => {});' },
-          { op: "write", path: "dist/index.html", content: '<!DOCTYPE html><html><head><link rel="manifest" href="manifest.json"><script src="sw.js"></script></head><body><div id="app">Hello Mock</div></body></html>' }
+          { op: "write", path: "app/src/main/java/com/example/testapp/theme/Color.kt", content: 'package com.example.testapp.theme\n\nimport androidx.compose.ui.graphics.Color\n\nval Purple80 = Color(0xFFD0BCFF)\nval PurpleGrey80 = Color(0xFFCCC2DC)\n' },
+          { op: "write", path: "app/src/main/java/com/example/testapp/ui/main/MainScreen.kt", content: 'package com.example.testapp.ui.main\n\nimport androidx.compose.runtime.Composable\n\n@Composable\nfun MainScreen() {\n    // UI Layout\n}\n' }
         ]
       };
     }
@@ -66,7 +64,7 @@ function getMockResponse(role, messages) {
     if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
     return {
       operations: [
-        { op: "write", path: "dist/app.js", content: 'console.log("Mock App Loaded");' }
+        { op: "write", path: "app/src/main/java/com/example/testapp/ui/main/MainScreenViewModel.kt", content: 'package com.example.testapp.ui.main\n\nimport androidx.lifecycle.ViewModel\n\nclass MainScreenViewModel : ViewModel() {\n    // calculation logic\n}\n' }
       ]
     };
   }
@@ -77,7 +75,7 @@ function getMockResponse(role, messages) {
     return {
       explanation: "Fixed missing closing bracket",
       operations: [
-        { op: "write", path: "dist/app.js", content: 'console.log("Mock App Loaded (Fixed)");' }
+        { op: "write", path: "app/src/main/java/com/example/testapp/ui/main/MainScreen.kt", content: 'package com.example.testapp.ui.main\n\nimport androidx.compose.runtime.Composable\n\n@Composable\nfun MainScreen() {\n    // UI Layout (Fixed)\n}\n' }
       ]
     };
   }
@@ -97,9 +95,40 @@ function getMockResponse(role, messages) {
   return {};
 }
 
-export async function infer({ role, messages, expect, mock = false }) {
+export async function infer({ role, messages, expect, mock = false, sketchPath = null }) {
   const model = ROLE_TO_MODEL[role] || 'gemma-4-e2b';
   const start = Date.now();
+
+  let formattedMessages = [...messages];
+  if (sketchPath && fs.existsSync(sketchPath)) {
+    try {
+      const mimeTypes = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp'
+      };
+      const ext = path.extname(sketchPath).toLowerCase();
+      const mime = mimeTypes[ext] || 'image/png';
+      const fileData = fs.readFileSync(sketchPath);
+      const base64Img = fileData.toString('base64');
+      const dataUrl = `data:${mime};base64,${base64Img}`;
+      
+      const lastUserMsgIndex = formattedMessages.map(m => m.role).lastIndexOf('user');
+      if (lastUserMsgIndex !== -1) {
+        const textContent = formattedMessages[lastUserMsgIndex].content;
+        formattedMessages[lastUserMsgIndex] = {
+          role: 'user',
+          content: [
+            { type: 'text', text: textContent },
+            { type: 'image_url', image_url: { url: dataUrl } }
+          ]
+        };
+      }
+    } catch (err) {
+      traceError(`Failed to process sketch image: ${err.message}`);
+    }
+  }
 
   if (mock) {
     // Simulated response timing
@@ -116,7 +145,7 @@ export async function infer({ role, messages, expect, mock = false }) {
   
   const payload = {
     model,
-    messages,
+    messages: formattedMessages,
     temperature: 0.1, // low temp for structured adherence
     response_format: expect === 'json' ? { type: 'json_object' } : undefined
   };

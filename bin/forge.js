@@ -5,19 +5,28 @@ import path from 'node:path';
 import { loadState } from '../src/state.js';
 import { runLoop } from '../src/loop.js';
 import { printTaskGraph } from '../src/trace.js';
+import { enableVoice } from '../src/tools/speaker.js';
 
 const [,, command, ...args] = process.argv;
 
 const MOCK_FLAG = process.argv.includes('--mock');
 const DEMO_FLAG = process.argv.includes('--demo');
+const VOICE_FLAG = process.argv.includes('--voice');
+
+let SKETCH_PATH = null;
+const sketchIndex = process.argv.indexOf('--sketch');
+if (sketchIndex !== -1 && sketchIndex + 1 < process.argv.length) {
+  SKETCH_PATH = process.argv[sketchIndex + 1];
+}
 
 function showHelp() {
   console.log(`
-Forge - Autonomous On-Device PWA Coding Agent
+Forge - Autonomous On-Device Native Android Coding Agent
 Usage:
-  forge new "<natural language request>" [--mock] [--demo]
-  forge resume [--mock] [--demo]
+  forge new "<natural language request>" [--mock] [--demo] [--voice] [--sketch <path_to_sketch>]
+  forge resume [--mock] [--demo] [--voice]
   forge status
+  forge explain
 `);
   process.exit(1);
 }
@@ -28,6 +37,10 @@ async function main() {
   }
 
   const projDir = process.cwd();
+
+  if (VOICE_FLAG || DEMO_FLAG) {
+    enableVoice(true);
+  }
 
   switch (command.toLowerCase()) {
     case 'status': {
@@ -40,9 +53,29 @@ async function main() {
       break;
     }
 
+    case 'explain': {
+      const state = loadState(projDir);
+      if (!state) {
+        console.log('No active project found.');
+        process.exit(0);
+      }
+      const { explainTimeline } = await import('../src/trace.js');
+      explainTimeline(state);
+      break;
+    }
+
     case 'new': {
       // Find objective from args (excluding flags)
-      const cleanArgs = args.filter(arg => !arg.startsWith('--'));
+      const cleanArgs = [];
+      for (let i = 0; i < args.length; i++) {
+        if (args[i].startsWith('--')) {
+          if (args[i] === '--sketch') {
+            i++; // skip the path that follows
+          }
+          continue;
+        }
+        cleanArgs.push(args[i]);
+      }
       const objective = cleanArgs[0];
       if (!objective) {
         console.error('Error: Please provide an app request description, e.g., forge new "tip calculator"');
@@ -54,7 +87,9 @@ async function main() {
         isNew: true,
         projDir,
         mock: MOCK_FLAG,
-        demo: DEMO_FLAG
+        demo: DEMO_FLAG,
+        voice: VOICE_FLAG,
+        sketchPath: SKETCH_PATH
       });
       break;
     }
@@ -64,7 +99,8 @@ async function main() {
         isNew: false,
         projDir,
         mock: MOCK_FLAG,
-        demo: DEMO_FLAG
+        demo: DEMO_FLAG,
+        voice: VOICE_FLAG
       });
       break;
     }
