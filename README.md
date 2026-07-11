@@ -1,13 +1,13 @@
 # Forge 🛠️
 > **Autonomous On-Device Agentic Platform for Native Android Apps — Running 100% Offline on Android (LiteRT + Gemma 4)**
 
-Forge is an **on-device, fully autonomous, offline agentic compilation platform** built as a native Android Application (`forge-app/`). It is designed to run completely offline on modern Android devices (such as the Google Pixel 10 Pro or Samsung S23 Ultra), leveraging on-device NPUs/GPUs via **Google's LiteRT-LM (TFLite) SDK** to run Gemma 4 E4B (Quality Path) and E2B (Fast Path) models. 
+Forge is an **on-device, fully autonomous, offline agentic compilation platform** built as a native Android Application (`forge/`). It is designed to run completely offline on modern Android devices (such as the Google Pixel 10 Pro or Samsung S23 Ultra), leveraging on-device NPUs/GPUs via **Google's LiteRT-LM (TFLite) SDK** to run Gemma 4 E4B (Quality Path) and E2B (Fast Path) models. 
 
 Forge takes a natural language objective (e.g., *"build a loan ledger for my 5-member self-help group"*), plans a sequential task graph, synthesizes Material You Jetpack Compose code, validates compilation, and deploys fully working apps natively—**all offline, completely local, on-device.**
 
 ---
 
-## 🏗️ Production Architecture: The Android App (`forge-app/`)
+## 🏗️ Production Architecture: The Android App (`forge/`)
 
 Unlike traditional CLI wrappers or cloud-dependent chatbots, the production version of Forge is engineered as a **native Android Application** wrapping the agent's core cycle in a robust Android Service infrastructure.
 
@@ -52,7 +52,7 @@ graph TD
     ADB --> Mobile([Live Native Android Application])
 ```
 
-### 📱 Core Android App Features (`forge-app/`)
+### 📱 Core Android App Features (`forge/`)
 *   **Adreno GPU/NPU Hardware Acceleration:** Implements the Google `LiteRtLmHelper` to load and run `.litertlm` models utilizing Snapdragon hardware backends, cutting token generation latency to near-instantaneous levels.
 *   **Foreground Agent Service:** The agent execution loop runs inside `ForgeAgentService.kt`, showing a persistent system notification so Android's low-memory killer does not abort compile cycles.
 *   **Atomic State Preservation:** Writes state atomically to `state.json` inside private directories using a `.tmp` rename mechanism, ensuring durability across phone reboot or power loss.
@@ -113,24 +113,24 @@ Forge incorporates groundbreaking offline multimodalities designed specifically 
 
 ## 📦 Android App Build & Deployment
 
-All code for the on-device compilation application is contained in the `forge-app/` subdirectory.
+All code for the on-device compilation application is contained in the `forge/` subdirectory.
 
 ### System Prerequisites:
 *   Java Development Kit (JDK) 17 or higher.
 *   Android SDK Platform 36 and Android Build-Tools installed.
 
 ### Build and Package local APK:
-From inside `forge-app/`, execute:
+From inside `forge/`, execute:
 ```bash
 ./gradlew :app:assembleDebug
 ```
 The compiled APK will be generated at:
-`forge-app/app/build/outputs/apk/debug/app-debug.apk`
+`forge/app/build/outputs/apk/debug/app-debug.apk`
 
 ### ADB Direct Installation:
 To install and start the core Forge Agent UI on a connected mobile phone over ADB:
 ```bash
-adb install -r forge-app/app/build/outputs/apk/debug/app-debug.apk
+adb install -r forge/app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.forge.app/com.forge.app.MainActivity
 ```
 
