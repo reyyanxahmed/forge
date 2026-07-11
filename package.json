@@ -1,0 +1,17 @@
+{
+  "name": "forge",
+  "version": "1.0.0",
+  "description": "Autonomous on-device coding agent running offline on Gemma 4",
+  "type": "module",
+  "bin": {
+    "forge": "./bin/forge.js"
+  },
+  "scripts": {
+    "status": "node bin/forge.js status"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "author": "Antigravity",
+  "license": "MIT"
+}
