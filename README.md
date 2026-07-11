@@ -11,45 +11,45 @@ Forge takes a natural language objective (e.g., *"build a loan ledger for my 5-m
 
 Unlike traditional CLI wrappers or cloud-dependent chatbots, the production version of Forge is engineered as a **native Android Application** wrapping the agent's core cycle in a robust Android Service infrastructure.
 
-```
-                    +------------------------------------+
-                    |        NATIVE ANDROID UI           |
-                    +-----------------+------------------+
-                                      |
-                                      v
-                             +--------+--------+
-                             | FOREGROUND SVC  |  <--- Streams live telemetry
-                             +--------+--------+       states to Compose UI
-                                      |
-                                      v
-                             +--------+--------+
-        +-------------------->|  AGENT LOOP     |<--------------------+
-        |                     | (AgentLoop.kt)  |                     |
-        |                     +--------+--------+                     |
-        |                              |                              |
-        |                              v                              |
-     [SENSE]                    +------+------+                    [CHECK]
-Loads active state,            |  ROUTER      |               Simulates compiled run,
-grounding briefing, and        | (Inference   |               rates architectural
-failure history.               |  Router.kt)  |               quality logs.
-        ^                              |                              ^
-        |               +--------------+--------------+               |
-        |               |                             |               |
-        |               v                             v               |
-        |        [GEMMA 4 E4B]                 [GEMMA 4 E2B]          |
-        |        (LiteRT-LM GPU)               (LiteRT-LM CPU)        |
-        |        * Planning                    * Binary Decisions     |
-        |        * Code Generation             * Task Completions     |
-        |        * Fix Synthesis               * Success Grading      |
-        |               |                             |               |
-        |               +--------------+--------------+               |
-        |                              |                              |
-        |                              v                              |
-        |                           [ACT]                             |
-        |                    Saves source files and                   |
-        |                    emits file-ledger changes                |
-        |                              |                              |
-        +------------------------------+------------------------------+
+```mermaid
+graph TD
+    User([User App Request]) -->|Natural Language Goal| CLI[Forge CLI / Android Foreground Service]
+    CLI --> Loop{Sense-Decide-Act-Check Loop}
+    
+    %% Sense Phase
+    Loop -->|1. SENSE| Sense[Sense: Load State & Re-grounding Briefing]
+    Sense --> StateDB[(.forge/state.json Atomic Storage)]
+    
+    %% Decide Phase
+    Sense -->|2. DECIDE| Decide[Decide: Policy-Based Model Routing]
+    Decide -->|High-Cognition Tasks| E4B[Gemma-4-E4B Model <br> Quality Path: Planning & Coder]
+    Decide -->|Binary Evaluations| E2B[Gemma-4-E2B Model <br> Fast Path: Judge Decisions]
+    
+    %% Act Phase
+    E4B -->|3. ACT| Act[Act: Code Synthesis & File Modifications]
+    Act --> Ledger[(Workspace Ledger / Generated Files)]
+    
+    %% Check Phase
+    Act -->|4. CHECK| Check[Check: Live Verification & Benchmarking]
+    Check -->|Kotlin Compilation| Gradle[Gradle compileDebugKotlin]
+    Check -->|Accessibility Check| Bench[Lighthouse Quality Benchmarker]
+    
+    %% Evaluation
+    Check --> Evaluate{Evaluate Build Outcome}
+    Evaluate -->|PASS| Done[Task Marked DONE]
+    Done --> Loop
+    Evaluate -->|FAIL < 3 attempts| Recover[Fixer Path: Error Signature Normalization & Diagnosis]
+    Recover --> E4B
+    
+    Evaluate -->|FAIL >= 3 attempts| Escalate[Escalation Boundary: Suspends Loop]
+    Escalate -->|Dynamic Prompt| Human[Human-in-the-Loop Clarification]
+    Human -->|Guidance Input| Replan[Gemma-4-E4B Re-planner]
+    Replan -->|Adjusted Task Graph| Loop
+    
+    %% Completion
+    Loop -->|All Tasks DONE| Deploy[Local APK Assembly]
+    Deploy -->|assembleDebug| ADB[ADB Installation / On-Device Deploy]
+    ADB --> Mobile([Live Native Android Application])
 ```
 
 ### 📱 Core Android App Features (`forge-app/`)
