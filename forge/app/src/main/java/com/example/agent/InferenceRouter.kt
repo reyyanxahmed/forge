@@ -37,32 +37,25 @@ class InferenceRouter(
         JUDGE("gemma-4-e2b"),
     }
 
-    /** Returns a parsed JSONObject for JSON-expected roles, or null on failure. */
-    suspend fun infer(req: InferRequest): JSONObject? = withContext(Dispatchers.IO) {
+    /**
+     * Runs one inference. Prefers the IN-PROCESS engine (streaming tokens via
+     * [onToken]) and falls back to the loopback HTTP server. Returns a parsed
+     * JSONObject for JSON roles, {"text": ...} otherwise, or null on failure.
+     */
+    suspend fun infer(req: InferRequest, onToken: (String) -> Unit = {}): JSONObject? = withContext(Dispatchers.IO) {
         val start = System.currentTimeMillis()
         if (useMock) {
             val elapsed = 50L + (0..80).random()
             delay(elapsed)
             val res = MockModels.respond(req.role, req.userPrompt)
+            res.optString("text", "").takeIf { it.isNotEmpty() }?.let { runCatching { onToken(it) } }
             val inTokens = estimateTokens(req.userPrompt + req.systemPrompt)
             val outTokens = estimateTokens(res.toString())
             listener?.onDecide(req.role.model, "[MOCK] Served role: ${req.role} | Latency: ${elapsed}ms | Tokens: In~$inTokens Out~$outTokens")
             return@withContext res
         }
-
-        val messages = JSONArray().apply {
-            put(JSONObject().apply {
-                put("role", "system")
-                put("content", req.systemPrompt)
-            })
-            put(JSONObject().apply {
-                put("role", "user")
-                put("content", req.userPrompt)
-            })
-        }
         try {
-            val raw = post(req.role.model, messages, temperature = 0.1, jsonMode = req.expectJson)
-            val text = extractContent(raw)
+            val text = generate(req, onToken)
             if (req.expectJson) {
                 val parsed = parseJsonLenient(text)
                 if (parsed != null) {
@@ -86,6 +79,22 @@ class InferenceRouter(
         null
     }
 
+    /** One generation, in-process (streaming) if the engine is ready, else HTTP. */
+    private suspend fun generate(req: InferRequest, onToken: (String) -> Unit): String {
+        val helper = EngineProvider.helper
+        if (helper != null && helper.isReady()) {
+            return helper.generateStreaming(formatPrompt(req.systemPrompt, req.userPrompt), onToken)
+        }
+        val messages = JSONArray().apply {
+            put(JSONObject().apply { put("role", "system"); put("content", req.systemPrompt) })
+            put(JSONObject().apply { put("role", "user"); put("content", req.userPrompt) })
+        }
+        return extractContent(post(req.role.model, messages, temperature = 0.1, jsonMode = req.expectJson))
+    }
+
+    private fun formatPrompt(system: String, user: String): String =
+        "<start_of_turn>user\n$system\n\n$user<end_of_turn>\n<start_of_turn>model\n"
+
     private fun trace(req: InferRequest, start: Long, out: String) {
         val elapsed = System.currentTimeMillis() - start
         val inT = estimateTokens(req.userPrompt + req.systemPrompt)
@@ -94,26 +103,21 @@ class InferenceRouter(
     }
 
     private suspend fun selfCorrect(req: InferRequest, prevText: String): JSONObject? {
-        val messages = JSONArray().apply {
-            put(JSONObject().apply {
-                put("role", "system")
-                put("content", req.systemPrompt)
-            })
-            put(JSONObject().apply {
-                put("role", "user")
-                put("content", req.userPrompt)
-            })
-            put(JSONObject().apply {
-                put("role", "assistant")
-                put("content", prevText)
-            })
-            put(JSONObject().apply {
-                put("role", "user")
-                put("content", "Your previous response was not valid JSON. Output ONLY valid raw JSON matching the requested schema. Do not include markdown code fences or conversational text.")
-            })
+        val corrective = "Your previous response was not valid JSON. Output ONLY valid raw JSON matching the requested schema. Do not include markdown code fences or conversational text."
+        val helper = EngineProvider.helper
+        val text = if (helper != null && helper.isReady()) {
+            helper.generateStreaming(
+                formatPrompt(req.systemPrompt, "${req.userPrompt}\n\nYour previous reply:\n$prevText\n\n$corrective")
+            ) {}
+        } else {
+            val messages = JSONArray().apply {
+                put(JSONObject().apply { put("role", "system"); put("content", req.systemPrompt) })
+                put(JSONObject().apply { put("role", "user"); put("content", req.userPrompt) })
+                put(JSONObject().apply { put("role", "assistant"); put("content", prevText) })
+                put(JSONObject().apply { put("role", "user"); put("content", corrective) })
+            }
+            extractContent(post(req.role.model, messages, temperature = 0.0, jsonMode = true))
         }
-        val raw = post(req.role.model, messages, temperature = 0.0, jsonMode = true)
-        val text = extractContent(raw)
         return parseJsonLenient(text)
     }
 

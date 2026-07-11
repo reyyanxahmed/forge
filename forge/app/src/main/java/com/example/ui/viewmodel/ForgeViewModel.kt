@@ -54,6 +54,13 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
     private val _currentForgeState = MutableStateFlow<ForgeState?>(null)
     val currentForgeState = _currentForgeState.asStateFlow()
 
+    // Live token stream from the model (what Gemma is writing right now) + a label
+    // describing the current phase, so the UI can show generation as it happens.
+    private val _liveStream = MutableStateFlow("")
+    val liveStream = _liveStream.asStateFlow()
+    private val _liveLabel = MutableStateFlow("")
+    val liveLabel = _liveLabel.asStateFlow()
+
     // Active screen index (0: Home, 1: Progress, 2: Library, 3: Settings)
     private val _activeScreen = MutableStateFlow(0)
     val activeScreen = _activeScreen.asStateFlow()
@@ -227,6 +234,9 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
         var artifactHtml = ""
 
         fun updateState(status: String, escalations: List<Escalation> = emptyList(), score: Int = 0) {
+            if (status == "done" || status == "failed" || status == "escalated") {
+                _liveLabel.value = ""
+            }
             val state = ForgeState(
                 objective = objective,
                 plan = currentTasks,
@@ -267,13 +277,14 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
         speak("Planning your app.")
         updateState("in_progress")
         logs.add("[Decide] Requesting task plan from local Gemma model...")
+        _liveLabel.value = "🧠 Planning tasks"; _liveStream.value = ""
         updateState("in_progress")
         val plannerRes = router.infer(com.example.agent.InferenceRouter.InferRequest(
             role = com.example.agent.InferenceRouter.Role.PLANNER,
             systemPrompt = com.example.agent.Prompts.PLANNER,
             userPrompt = "Objective: \"$objective\". Generate the task graph now.",
             expectJson = true
-        ))
+        )) { chunk -> _liveStream.value += chunk }
         val plannedTasks = mutableListOf<Task>()
         plannerRes?.optJSONArray("tasks")?.let { arr ->
             for (i in 0 until arr.length()) {
@@ -300,12 +311,13 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
         updateState("in_progress")
         logs.add("[Sense] Generating a self-contained offline web app with Gemma...")
         speak("Generating the application code.")
+        _liveLabel.value = "✍️ Writing index.html"; _liveStream.value = ""
         val coderRes = router.infer(com.example.agent.InferenceRouter.InferRequest(
             role = com.example.agent.InferenceRouter.Role.CODER,
             systemPrompt = com.example.agent.Prompts.CODER,
             userPrompt = "Objective: \"$objective\". Build the complete index.html now.",
             expectJson = false
-        ))
+        )) { chunk -> _liveStream.value += chunk }
         val generated = extractHtml(coderRes?.optString("text", ""))
         if (generated.isBlank()) {
             logs.add("[Check] Generation failed — the model did not return valid HTML.")
@@ -337,14 +349,17 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
             speak("Found a runtime error. Self healing.")
             updateState("in_progress")
             logs.add("[Decide] [gemma-4-e4b] Diagnosing and repairing the app...")
+            _liveLabel.value = "🔧 Repairing index.html (attempt $attempt)"; _liveStream.value = ""
             updateState("in_progress")
+            val shortened = getShortenedHtml(artifactHtml)
             val fixRes = router.infer(com.example.agent.InferenceRouter.InferRequest(
                 role = com.example.agent.InferenceRouter.Role.FIXER,
                 systemPrompt = com.example.agent.Prompts.FIXER,
-                userPrompt = "Objective: \"$objective\".\nRuntime error(s):\n${errors.joinToString("\n")}\n\nCurrent index.html:\n$artifactHtml",
+                userPrompt = "Objective: \"$objective\".\nRuntime error(s):\n${errors.joinToString("\n")}\n\nCurrent index.html:\n$shortened",
                 expectJson = false
-            ))
-            val fixed = extractHtml(fixRes?.optString("text", ""))
+            )) { chunk -> _liveStream.value += chunk }
+            val fixedRaw = extractHtml(fixRes?.optString("text", ""))
+            val fixed = mergeStylesAndSvgs(artifactHtml, fixedRaw)
             if (fixed.isNotBlank()) {
                 artifactHtml = fixed
                 writeArtifact(projectId, artifactHtml)
@@ -401,13 +416,14 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
         speak("Applying your guidance.")
         updateState("in_progress")
         logs.add("[Decide] [gemma-4-e4b] Re-synthesizing the app with your guidance...")
+        _liveLabel.value = "🔧 Applying your guidance"; _liveStream.value = ""
         updateState("in_progress")
         val guidedRes = router.infer(com.example.agent.InferenceRouter.InferRequest(
             role = com.example.agent.InferenceRouter.Role.FIXER,
             systemPrompt = com.example.agent.Prompts.FIXER,
             userPrompt = "Objective: \"$objective\". Human guidance: \"$guidance\".\nRuntime error(s):\n${errors.joinToString("\n")}\n\nCurrent index.html:\n$artifactHtml",
             expectJson = false
-        ))
+        )) { chunk -> _liveStream.value += chunk }
         val guidedHtml = extractHtml(guidedRes?.optString("text", ""))
         if (guidedHtml.isNotBlank()) {
             artifactHtml = guidedHtml
@@ -494,5 +510,55 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
             it.stop()
             it.shutdown()
         }
+    }
+
+    private fun getShortenedHtml(html: String): String {
+        var result = html
+        // 1. Remove lengthy inline style blocks to prevent LLM prompt saturation
+        val styleRegex = Regex("<style[^>]*>[\\s\\S]*?</style>", RegexOption.IGNORE_CASE)
+        result = styleRegex.replace(result, "<style>/* [CSS Stylesheets omitted for context brevity] */</style>")
+        
+        // 2. Remove giant inline SVGs
+        val svgRegex = Regex("<svg[^>]*>[\\s\\S]*?</svg>", RegexOption.IGNORE_CASE)
+        result = svgRegex.replace(result, "<svg><!-- [Inline SVG Assets omitted] --></svg>")
+        return result
+    }
+
+    private fun mergeStylesAndSvgs(originalHtml: String, fixedHtml: String): String {
+        var merged = fixedHtml
+        
+        // Re-inject the original stylesheet if the model preserved the placeholder style block
+        val styleRegex = Regex("<style[^>]*>([\\s\\S]*?)</style>", RegexOption.IGNORE_CASE)
+        val styleMatch = styleRegex.find(originalHtml)
+        if (styleMatch != null) {
+            val originalStyles = styleMatch.groupValues[1]
+            val fixedStyleRegex = Regex("<style[^>]*>([\\s\\S]*?)</style>", RegexOption.IGNORE_CASE)
+            merged = fixedStyleRegex.replace(merged) { matchResult ->
+                val content = matchResult.groupValues[1]
+                if (content.contains("omitted", ignoreCase = true) || content.isBlank() || content.contains("brevity", ignoreCase = true)) {
+                    "<style>$originalStyles</style>"
+                } else {
+                    matchResult.value
+                }
+            }
+        }
+        
+        // Re-inject the original SVGs if they were omitted in the repair output
+        val svgRegex = Regex("<svg[^>]*>([\\s\\S]*?)</svg>", RegexOption.IGNORE_CASE)
+        val svgMatch = svgRegex.find(originalHtml)
+        if (svgMatch != null) {
+            val originalSvgs = svgMatch.value
+            val fixedSvgRegex = Regex("<svg[^>]*>([\\s\\S]*?)</svg>", RegexOption.IGNORE_CASE)
+            merged = fixedSvgRegex.replace(merged) { matchResult ->
+                val content = matchResult.groupValues[1]
+                if (content.contains("omitted", ignoreCase = true) || content.isBlank()) {
+                    originalSvgs
+                } else {
+                    matchResult.value
+                }
+            }
+        }
+        
+        return merged
     }
 }

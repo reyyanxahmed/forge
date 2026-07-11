@@ -59,6 +59,7 @@ class LiteRtLmHelper(private val context: Context) {
                     conversation = newEngine.createConversation()
                     currentModelPath = modelPath
                     activeBackend = name
+                    EngineProvider.helper = this@LiteRtLmHelper
                     val ms = System.currentTimeMillis() - started
                     Log.d(TAG, "LiteRT-LM Engine initialized successfully on $name backend in ${ms}ms.")
                     return@withContext true
@@ -93,7 +94,41 @@ class LiteRtLmHelper(private val context: Context) {
         builder.toString()
     }
 
+    fun isReady(): Boolean = engine != null
+
+    /**
+     * Streams a single-shot generation token-by-token. Creates a fresh
+     * Conversation per call so each agent role (planner/coder/fixer/judge) is
+     * independent and doesn't accumulate prior context. [onToken] is invoked for
+     * each chunk on a background thread; the full text is returned at the end.
+     */
+    suspend fun generateStreaming(prompt: String, onToken: (String) -> Unit): String =
+        withContext(Dispatchers.Default) {
+            val eng = engine ?: return@withContext "Error: LiteRT-LM engine not initialized."
+            val conv = try {
+                eng.createConversation()
+            } catch (e: Throwable) {
+                Log.e(TAG, "createConversation failed: ${e.message}", e)
+                return@withContext "Error: ${e.message}"
+            }
+            val builder = StringBuilder()
+            try {
+                conv.sendMessageAsync(prompt).collect { chunk ->
+                    val piece = chunk.toString()
+                    builder.append(piece)
+                    try { onToken(piece) } catch (_: Throwable) {}
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "Streaming generation error: ${e.message}", e)
+                builder.append("\n[Error during generation: ${e.message}]")
+            } finally {
+                try { conv.close() } catch (_: Throwable) {}
+            }
+            builder.toString()
+        }
+
     fun close() {
+        if (EngineProvider.helper === this) EngineProvider.helper = null
         try {
             conversation?.close()
         } catch (e: Throwable) {

@@ -7,6 +7,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -51,6 +53,9 @@ fun ProgressScreen(
 ) {
     var feedExpanded by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    val liveLabel by viewModel.liveLabel.collectAsState()
+    val liveStream by viewModel.liveStream.collectAsState()
 
     // Determine current phase based on last session log
     val lastLog = state.sessionLog.lastOrNull() ?: ""
@@ -206,6 +211,54 @@ fun ProgressScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     contentPadding = PaddingValues(bottom = 120.dp)
                 ) {
+                    // Live model output — what Gemma is writing right now
+                    if (liveLabel.isNotEmpty() || liveStream.isNotEmpty()) {
+                        item {
+                            val streamScroll = rememberScrollState()
+                            LaunchedEffect(liveStream) { streamScroll.scrollTo(streamScroll.maxValue) }
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F1115)),
+                                border = BorderStroke(1.dp, currentPhaseColor.copy(alpha = 0.45f))
+                            ) {
+                                Column(modifier = Modifier.padding(14.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .alpha(pulseAlpha)
+                                                .background(PhaseActColor, CircleShape)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = liveLabel.ifEmpty { "Gemma is working" },
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = currentPhaseColor
+                                        )
+                                        Spacer(Modifier.weight(1f))
+                                        Text(
+                                            text = "${liveStream.length} chars",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFF64748B)
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(200.dp)
+                                            .verticalScroll(streamScroll)
+                                    ) {
+                                        HighlightedConsoleStream(liveStream)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     item {
                         Text(
                             text = "AGENT TASK PIPELINE",
@@ -1129,6 +1182,42 @@ fun StatCard(
                 text = label,
                 fontSize = 9.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            )
+        }
+    }
+}
+
+@Composable
+fun HighlightedConsoleStream(text: String) {
+    if (text.isEmpty()) {
+        Text(
+            text = "Waiting for local Gemma model...",
+            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp),
+            color = Color(0xFF64748B)
+        )
+        return
+    }
+
+    val lines = text.split("\n").takeLast(35)
+    Column {
+        lines.forEach { line ->
+            val color = when {
+                line.trim().startsWith("<!doctype", ignoreCase = true) || line.trim().startsWith("<html", ignoreCase = true) || line.trim().startsWith("</html>", ignoreCase = true) -> PhaseCheckColor
+                line.trim().startsWith("<script", ignoreCase = true) || line.trim().startsWith("</script>", ignoreCase = true) -> PhaseDecideColor
+                line.trim().startsWith("<div", ignoreCase = true) || line.trim().startsWith("</div>", ignoreCase = true) || line.trim().startsWith("<p", ignoreCase = true) -> PhaseSenseColor
+                line.trim().contains("class=", ignoreCase = true) || line.trim().contains("style=", ignoreCase = true) -> PhaseActColor
+                line.trim().startsWith("<!--") || line.trim().startsWith("//") -> Color(0xFF475569) // Slate gray comments
+                else -> Color(0xFFCBD5E1)
+            }
+            Text(
+                text = line,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    fontWeight = if (color != Color(0xFFCBD5E1)) FontWeight.Bold else FontWeight.Normal
+                ),
+                color = color
             )
         }
     }
