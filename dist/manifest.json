@@ -1,0 +1,9 @@
+{
+  "name": "Mock Split App",
+  "short_name": "SplitApp",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#121212",
+  "icons": [{ "src": "icon.png", "sizes": "192x192", "type": "image/png" }]
+}
