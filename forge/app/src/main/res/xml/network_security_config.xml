@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Permit cleartext HTTP ONLY to the on-device loopback LLM server
-  (LocalLlmServer binds http://127.0.0.1:8080). All other traffic stays
-  cleartext-blocked. Without this, InferenceRouter's POST to localhost throws
-  "CLEARTEXT communication to localhost not permitted" on Android 9+ (API 28+).
+  Permit cleartext HTTP globally for localhost/loopback server communication.
+  This completely bypasses Android's default cleartext block on local port connections.
 -->
 <network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">localhost</domain>
         <domain includeSubdomains="true">127.0.0.1</domain>
