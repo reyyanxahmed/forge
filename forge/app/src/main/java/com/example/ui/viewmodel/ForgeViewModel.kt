@@ -61,6 +61,13 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
     private val _liveLabel = MutableStateFlow("")
     val liveLabel = _liveLabel.asStateFlow()
 
+    private val _attachedSketchPath = MutableStateFlow<String?>(null)
+    val attachedSketchPath = _attachedSketchPath.asStateFlow()
+
+    fun setAttachedSketchPath(path: String?) {
+        _attachedSketchPath.value = path
+    }
+
     // Active screen index (0: Home, 1: Progress, 2: Library, 3: Settings)
     private val _activeScreen = MutableStateFlow(0)
     val activeScreen = _activeScreen.asStateFlow()
@@ -213,6 +220,9 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
             createdAt = System.currentTimeMillis()
         )
 
+        val sketch = _attachedSketchPath.value
+        _attachedSketchPath.value = null // Clear for next projects
+
         viewModelScope.launch {
             val id = repository.insertProject(project)
             _currentProjectId.value = id.toInt()
@@ -220,12 +230,18 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
             
             // Start simulation loop
             simulationJob = launch {
-                runAgentSimulation(id.toInt(), appName, objective, initialTasks)
+                runAgentSimulation(id.toInt(), appName, objective, initialTasks, sketch)
             }
         }
     }
 
-    private suspend fun runAgentSimulation(projectId: Int, appName: String, objective: String, tasks: List<Task>) {
+    private suspend fun runAgentSimulation(
+        projectId: Int, 
+        appName: String, 
+        objective: String, 
+        tasks: List<Task>,
+        sketchPath: String? = null
+    ) {
         var currentTasks = tasks.map { it.copy() }
         val logs = mutableListOf<String>()
         val ledger = linkedMapOf<String, String>()
@@ -283,7 +299,8 @@ class ForgeViewModel(application: Application) : AndroidViewModel(application), 
             role = com.example.agent.InferenceRouter.Role.PLANNER,
             systemPrompt = com.example.agent.Prompts.PLANNER,
             userPrompt = "Objective: \"$objective\". Generate the task graph now.",
-            expectJson = true
+            expectJson = true,
+            sketchPath = sketchPath // Pass attached layout photo to planner!
         )) { chunk -> _liveStream.value += chunk }
         val plannedTasks = mutableListOf<Task>()
         plannerRes?.optJSONArray("tasks")?.let { arr ->

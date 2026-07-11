@@ -87,7 +87,34 @@ class InferenceRouter(
         }
         val messages = JSONArray().apply {
             put(JSONObject().apply { put("role", "system"); put("content", req.systemPrompt) })
-            put(JSONObject().apply { put("role", "user"); put("content", req.userPrompt) })
+            
+            val userMsg = JSONObject().apply { put("role", "user") }
+            if (req.sketchPath != null && java.io.File(req.sketchPath).exists()) {
+                try {
+                    val bytes = java.io.File(req.sketchPath).readBytes()
+                    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                    val dataUrl = "data:image/png;base64,$b64"
+                    
+                    val contentArr = JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("type", "text")
+                            put("text", req.userPrompt)
+                        })
+                        put(JSONObject().apply {
+                            put("type", "image_url")
+                            put("image_url", JSONObject().apply {
+                                put("url", dataUrl)
+                            })
+                        })
+                    }
+                    userMsg.put("content", contentArr)
+                } catch (e: Exception) {
+                    userMsg.put("content", req.userPrompt)
+                }
+            } else {
+                userMsg.put("content", req.userPrompt)
+            }
+            put(userMsg)
         }
         return extractContent(post(req.role.model, messages, temperature = 0.1, jsonMode = req.expectJson))
     }

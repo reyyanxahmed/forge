@@ -21,7 +21,15 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Collections
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Code
+import android.net.Uri
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -54,6 +62,49 @@ fun HomeScreen(
     onSelectProject: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val attachedSketchPath by viewModel.attachedSketchPath.collectAsState()
+    
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val file = java.io.File(context.cacheDir, "gallery_sketch.png")
+                val outputStream = java.io.FileOutputStream(file)
+                inputStream?.use { input ->
+                    outputStream.use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                viewModel.setAttachedSketchPath(file.absolutePath)
+                viewModel.speak("Layout sketch attached successfully.")
+            } catch (e: Exception) {
+                Log.e("HomeScreen", "Failed to copy gallery image: ${e.message}")
+            }
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap: android.graphics.Bitmap? ->
+        if (bitmap != null) {
+            try {
+                val bytes = java.io.ByteArrayOutputStream()
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bytes)
+                val file = java.io.File(context.cacheDir, "camera_sketch.png")
+                val fo = java.io.FileOutputStream(file)
+                fo.write(bytes.toByteArray())
+                fo.close()
+                viewModel.setAttachedSketchPath(file.absolutePath)
+                viewModel.speak("Camera photo attached successfully.")
+            } catch (e: Exception) {
+                Log.e("HomeScreen", "Failed to save camera photo: ${e.message}")
+            }
+        }
+    }
+
     var textInput by remember { mutableStateOf("") }
     val keyboardController = LocalSoftwareKeyboardController.current
     val scrollState = rememberScrollState()
@@ -147,39 +198,99 @@ fun HomeScreen(
                     shape = RoundedCornerShape(28.dp)
                 )
                 .border(2.dp, borderBrush, RoundedCornerShape(28.dp))
-                .padding(horizontal = 4.dp, vertical = 2.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
-            TextField(
-                value = textInput,
-                onValueChange = { textInput = it },
-                placeholder = {
-                    Text(
-                        text = "Build a loan ledger for my self-help group...",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                    )
-                },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                keyboardActions = KeyboardActions(onGo = {
-                    if (textInput.isNotBlank()) {
-                        viewModel.startNewProject(textInput)
-                        keyboardController?.hide()
+            Column {
+                TextField(
+                    value = textInput,
+                    onValueChange = { textInput = it },
+                    placeholder = {
+                        Text(
+                            text = "Build a loan ledger for my self-help group...",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = {
+                        if (textInput.isNotBlank()) {
+                            viewModel.startNewProject(textInput)
+                            keyboardController?.hide()
+                        }
+                    }),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        disabledContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("objective_input")
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (attachedSketchPath != null) {
+                            Box(
+                                modifier = Modifier
+                                    .background(PhaseActColor.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                                    .border(1.dp, PhaseActColor.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Attached",
+                                        tint = PhaseActColor,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Sketch Attached",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = PhaseActColor
+                                    )
+                                }
+                            }
+                        }
                     }
-                }),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    disabledContainerColor = Color.Transparent,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("objective_input")
-            )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        IconButton(onClick = { cameraLauncher.launch(null) }) {
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = "Camera",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(onClick = { galleryLauncher.launch("image/*") }) {
+                            Icon(
+                                imageVector = Icons.Default.Collections,
+                                contentDescription = "Gallery",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // Suggestion Chips (Horizontally Scrollable)
