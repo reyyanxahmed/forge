@@ -52,7 +52,19 @@ class LiteRtLmHelper(private val context: Context) {
                 try {
                     Log.d(TAG, "Attempting LiteRT-LM init on $name backend...")
                     val started = System.currentTimeMillis()
-                    val config = EngineConfig(modelPath = modelPath, backend = backend)
+                    // maxNumTokens = 8192 allows the model to generate up to ~32K chars
+                    // of output. The library default is ~1024 tokens (~4K chars), which
+                    // truncates HTML pages mid-generation. 8192 is sufficient for a
+                    // complete single-file web app.
+                    val config = EngineConfig(
+                        modelPath = modelPath,
+                        backend = backend,
+                        visionBackend = null,
+                        audioBackend = null,
+                        maxNumTokens = 8192,
+                        maxNumImages = 1,
+                        cacheDir = null
+                    )
                     val newEngine = Engine(config)
                     newEngine.initialize()
                     engine = newEngine
@@ -61,7 +73,7 @@ class LiteRtLmHelper(private val context: Context) {
                     activeBackend = name
                     EngineProvider.helper = this@LiteRtLmHelper
                     val ms = System.currentTimeMillis() - started
-                    Log.d(TAG, "LiteRT-LM Engine initialized successfully on $name backend in ${ms}ms.")
+                    Log.d(TAG, "LiteRT-LM Engine initialized successfully on $name backend in ${ms}ms. maxNumTokens=8192")
                     return@withContext true
                 } catch (e: Throwable) {
                     lastError = e
